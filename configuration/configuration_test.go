@@ -18,7 +18,8 @@ var configStruct = Configuration{
 	Version: "0.1",
 	Log: struct {
 		AccessLog struct {
-			Disabled bool `yaml:"disabled,omitempty"`
+			Disabled     bool   `yaml:"disabled,omitempty"`
+			TrueIpHeader string `yaml:"trueipheader,omitempty"`
 		} `yaml:"accesslog,omitempty"`
 		Level        Loglevel               `yaml:"level,omitempty"`
 		Formatter    string                 `yaml:"formatter,omitempty"`
