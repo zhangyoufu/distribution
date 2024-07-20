@@ -1,14 +1,19 @@
 package middleware
 
 import (
-	"encoding/json"
+	"cmp"
 	"fmt"
-	"io"
 	"log"
+	"math"
 	"net"
-	"net/http"
+	"net/netip"
+	"slices"
 	"sync/atomic"
 	"time"
+
+	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
+	vpc20160428 "github.com/alibabacloud-go/vpc-20160428/v6/client"
+	credentials "github.com/aliyun/credentials-go/credentials"
 
 	patricia "github.com/kentik/patricia"
 	patricia_string_tree "github.com/kentik/patricia/string_tree"
@@ -16,14 +21,14 @@ import (
 
 // nolint:golint
 type aliyunIpToRegion struct {
-	jsonUrl string // nolint:golint
+	regions []string
 	tree    atomic.Pointer[patricia_string_tree.TreeV4]
 }
 
 // nolint:golint
-func newAliyunIpToRegion(jsonUrl string, refreshInterval time.Duration) (*aliyunIpToRegion, error) {
+func newAliyunIpToRegion(regions []string, refreshInterval time.Duration) (*aliyunIpToRegion, error) {
 	this := &aliyunIpToRegion{
-		jsonUrl: jsonUrl,
+		regions: regions,
 	}
 	err := this.refresh()
 	if err != nil {
@@ -42,45 +47,81 @@ func newAliyunIpToRegion(jsonUrl string, refreshInterval time.Duration) (*aliyun
 	return this, nil
 }
 
+// comparePrefix returns an integer comparing two prefixes. The result will be
+// 0 if lhs == rhs, -1 if lhs < rhs, and +1 if lhs > rhs. Prefixes sort first
+// by validity (invalid before valid), then address family (IPv4 before IPv6),
+// then masked prefix address, then prefix length, then unmasked address.
+func comparePrefix(lhs, rhs netip.Prefix) int {
+	// Aside from sorting based on the masked address, this use of Addr.Compare
+	// also enforces the valid vs. invalid and address family ordering for the
+	// prefix.
+	if c := lhs.Masked().Addr().Compare(rhs.Masked().Addr()); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(lhs.Bits(), rhs.Bits()); c != 0 {
+		return c
+	}
+	return lhs.Addr().Compare(rhs.Addr())
+}
+
+// nolint:golint
+// prefix list should be sorted, to avoid adding multiple tags for overlapped prefixes
+func (this *aliyunIpToRegion) fetchRegionPublicIPv4List(regionId string) ([]netip.Prefix, error) {
+	config := &openapi.Config{}
+	config.SetEndpoint("vpc.aliyuncs.com")
+
+	cred, err := credentials.NewCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("unable to initialize aliyun credential: %w", err)
+	}
+	config.SetCredential(cred)
+
+	client, err := vpc20160428.NewClient(config)
+	if err != nil {
+		return nil, err
+	}
+
+	request := &vpc20160428.DescribePublicIpAddressRequest{}
+	request.SetRegionId(regionId)
+	request.SetPageSize(math.MaxInt32)
+
+	response, err := client.DescribePublicIpAddress(request)
+	if err != nil {
+		return nil, err
+	}
+
+	prefixList := []netip.Prefix{}
+	for _, prefixStringPtr := range response.Body.PublicIpAddress {
+		prefix, err := netip.ParsePrefix(*prefixStringPtr)
+		if err != nil {
+			log.Printf("aliyunIpToRegion.fetchRegionPublicIPv4List invalid prefix %s in region %s", *prefixStringPtr, regionId)
+			continue
+		}
+		prefixList = append(prefixList, prefix)
+	}
+	slices.SortFunc(prefixList, comparePrefix)
+	return prefixList, nil
+}
+
 // nolint:golint
 func (this *aliyunIpToRegion) refresh() error {
-	rsp, err := http.Get(this.jsonUrl)
-	if err != nil {
-		return err
-	}
-	if rsp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", rsp.StatusCode)
-	}
-	jsonData, err := io.ReadAll(rsp.Body)
-	_ = rsp.Body.Close()
-	if err != nil {
-		return err
-	}
-	regions := map[string][]string{}
-	err = json.Unmarshal(jsonData, &regions)
-	if err != nil {
-		return err
-	}
 	tree := patricia_string_tree.NewTreeV4()
-	for regionId, cidrList := range regions { // nolint:golint
-		for _, cidrString := range cidrList {
-			_, ipNet, err := net.ParseCIDR(cidrString)
-			if err != nil {
-				return err
-			}
-			if len(ipNet.IP) != net.IPv4len {
-				return fmt.Errorf("CIDR %s is not IPv4", cidrString)
-			}
-			cidrBitLength, _ := ipNet.Mask.Size()
-			ipv4Addr := patricia.NewIPv4AddressFromBytes(ipNet.IP, uint(cidrBitLength))
-			tags := tree.FindTags(ipv4Addr)
-			if len(tags) == 1 {
+	for _, regionId := range this.regions { // nolint:golint
+		prefixList, err := this.fetchRegionPublicIPv4List(regionId)
+		if err != nil {
+			return fmt.Errorf("unable to fetch public IPv4 list for region %s: %w", regionId, err)
+		}
+		for _, prefix := range prefixList {
+			addr := prefix.Addr().As4()
+			_addr := patricia.NewIPv4AddressFromBytes(addr[:], uint(prefix.Bits()))
+			tags := tree.FindTags(_addr)
+			if len(tags) > 1 {
 				if tags[0] != regionId {
-					return fmt.Errorf("CIDR %s in multiple regions", cidrString)
+					return fmt.Errorf("public IPv4 prefix %s in multiple regions", prefix)
 				}
 				continue
 			}
-			_, _ = tree.Set(ipv4Addr, regionId)
+			_, _ = tree.Set(_addr, regionId)
 		}
 	}
 	this.tree.Store(tree)

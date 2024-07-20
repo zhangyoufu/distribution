@@ -70,16 +70,6 @@ func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.Stor
 		}
 	}
 
-	// parse regionIpJsonUrl
-	_regionIpJsonUrl, ok := options["regionIpJsonUrl"] // nolint:golint
-	if !ok {
-		return nil, fmt.Errorf("regionIpJsonUrl is not provided")
-	}
-	regionIpJsonUrl, ok := _regionIpJsonUrl.(string) // nolint:golint
-	if !ok {
-		return nil, fmt.Errorf("regionIpJsonUrl must be a string")
-	}
-
 	// parse regionIpRefreshInterval
 	regionIpRefreshInterval := 4 * time.Hour // nolint:golint
 	if d, ok := options["regionIpRefreshInterval"]; ok {
@@ -110,11 +100,13 @@ func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.Stor
 		return nil, fmt.Errorf("buckets were not specified in the correct format")
 	}
 	buckets := map[string]*oss.Bucket{}
+	regions := []string{}
 	for _regionId, _bucketName := range _bucketsMap { // nolint:golint
 		regionId, ok := _regionId.(string) // nolint:golint
 		if !ok {
 			return nil, fmt.Errorf("bucket regionId was not a string")
 		}
+		regions = append(regions, regionId)
 		bucketName, ok := _bucketName.(string)
 		if !ok {
 			return nil, fmt.Errorf("bucket name was not a string")
@@ -139,7 +131,7 @@ func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.Stor
 	}
 
 	// initialize ipToRegion
-	ipToRegion, err := newAliyunIpToRegion(regionIpJsonUrl, regionIpRefreshInterval)
+	ipToRegion, err := newAliyunIpToRegion(regions, regionIpRefreshInterval)
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize aliyunIpToRegion: %w", err)
 	}
