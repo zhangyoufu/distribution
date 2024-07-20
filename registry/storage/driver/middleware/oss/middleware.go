@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	awsCredentials "github.com/aws/aws-sdk-go/aws/credentials"
 	oss "github.com/aliyun/aliyun-oss-go-sdk/oss"
 	dcontext "github.com/distribution/distribution/v3/internal/dcontext"
 	requestutil "github.com/distribution/distribution/v3/internal/requestutil"
@@ -23,25 +24,19 @@ type ossStorageMiddleware struct {
 
 var _ storagedriver.StorageDriver = &ossStorageMiddleware{}
 
-func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.StorageDriver, options map[string]interface{}) (storagedriver.StorageDriver, error) {
-	// parse accessKeyId
-	_accessKeyId, ok := options["accessKeyId"] // nolint:golint
-	if !ok {
-		return nil, fmt.Errorf("accessKeyId is not provided")
-	}
-	accessKeyId, ok := _accessKeyId.(string) // nolint:golint
-	if !ok {
-		return nil, fmt.Errorf("accessKeyId must be a string")
-	}
+type CredentialProvider interface {
+	Credential() (awsCredentials.Value, error)
+}
 
-	// parse accessKeySecret
-	_accessKeySecret, ok := options["accessKeySecret"]
+func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.StorageDriver, options map[string]interface{}) (storagedriver.StorageDriver, error) {
+	// retrieve S3 credential from underlying storage driver
+	credentialProvider, ok := storageDriver.(CredentialProvider)
 	if !ok {
-		return nil, fmt.Errorf("accessKeySecret is not provided")
+		return nil, fmt.Errorf("the underlying storage driver does not provide credential")
 	}
-	accessKeySecret, ok := _accessKeySecret.(string)
-	if !ok {
-		return nil, fmt.Errorf("accessKeySecret must be a string")
+	credential, err := credentialProvider.Credential()
+	if err != nil {
+		return nil, fmt.Errorf("unable to retrieve credential from underlying storage driver")
 	}
 
 	// parse secure
@@ -129,10 +124,7 @@ func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.Stor
 			scheme = "https://"
 		}
 		endpoint := scheme + "oss-" + regionId + "-internal.aliyuncs.com"
-		client, err := oss.New(
-			endpoint,
-			accessKeyId,
-			accessKeySecret,
+		client, err := oss.New(endpoint, credential.AccessKeyID, credential.SecretAccessKey,
 			oss.AuthVersion(oss.AuthV4),
 			oss.Region(regionId),
 		)
