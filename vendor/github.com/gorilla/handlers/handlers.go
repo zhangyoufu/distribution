@@ -49,15 +49,25 @@ type responseLogger struct {
 	w      http.ResponseWriter
 	status int
 	size   int
+	done   bool
 }
 
 func (l *responseLogger) Write(b []byte) (int, error) {
+	if !l.done {
+		// The status will be StatusOK if WriteHeader has not been called yet
+		l.done = true
+		l.status = http.StatusOK
+	}
 	size, err := l.w.Write(b)
 	l.size += size
 	return size, err
 }
 
 func (l *responseLogger) WriteHeader(s int) {
+	if l.done {
+		return
+	}
+	l.done = true
 	l.w.WriteHeader(s)
 	l.status = s
 }
