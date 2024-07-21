@@ -28,7 +28,7 @@ type CredentialProvider interface {
 	Credential() (awsCredentials.Value, error)
 }
 
-func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.StorageDriver, options map[string]interface{}) (storagedriver.StorageDriver, error) {
+func newOssStorageMiddleware(ctx context.Context, storageDriver storagedriver.StorageDriver, options map[string]interface{}) (storagedriver.StorageDriver, error) {
 	// retrieve S3 credential from underlying storage driver
 	credentialProvider, ok := storageDriver.(CredentialProvider)
 	if !ok {
@@ -90,6 +90,26 @@ func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.Stor
 		}
 	}
 
+	// parse regionIpRefreshTimeout
+	regionIpRefreshTimeout := time.Duration(0) // nolint:golint
+	if d, ok := options["regionIpRefreshTimeout"]; ok {
+		switch d := d.(type) {
+		case time.Duration:
+			regionIpRefreshTimeout = d
+		case string:
+			dur, err := time.ParseDuration(d)
+			if err != nil {
+				return nil, fmt.Errorf("invalid regionIpRefreshTimeout: %w", err)
+			}
+			regionIpRefreshTimeout = dur
+		default:
+			return nil, fmt.Errorf("invalid regionIpRefreshTimeout: unsupported type")
+		}
+		if regionIpRefreshTimeout < 0 {
+			return nil, fmt.Errorf("invalid regionIpRefreshTimeout: should be non-negative")
+		}
+	}
+
 	// parse buckets
 	_buckets, ok := options["buckets"]
 	if !ok {
@@ -131,7 +151,7 @@ func newOssStorageMiddleware(_ context.Context, storageDriver storagedriver.Stor
 	}
 
 	// initialize ipToRegion
-	ipToRegion, err := newAliyunIpToRegion(regions, regionIpRefreshInterval)
+	ipToRegion, err := newAliyunIpToRegion(ctx, regions, regionIpRefreshInterval, regionIpRefreshTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize aliyunIpToRegion: %w", err)
 	}

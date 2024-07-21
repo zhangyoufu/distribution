@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -21,16 +23,18 @@ import (
 
 // nolint:golint
 type aliyunIpToRegion struct {
-	regions []string
-	tree    atomic.Pointer[patricia_string_tree.TreeV4]
+	refreshTimeout time.Duration
+	regions        []string
+	tree           atomic.Pointer[patricia_string_tree.TreeV4]
 }
 
 // nolint:golint
-func newAliyunIpToRegion(regions []string, refreshInterval time.Duration) (*aliyunIpToRegion, error) {
+func newAliyunIpToRegion(ctx context.Context, regions []string, refreshInterval, refreshTimeout time.Duration) (*aliyunIpToRegion, error) {
 	this := &aliyunIpToRegion{
 		regions: regions,
+		refreshTimeout: refreshTimeout,
 	}
-	err := this.refresh()
+	err := this.refresh(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +42,7 @@ func newAliyunIpToRegion(regions []string, refreshInterval time.Duration) (*aliy
 		ticker := time.NewTicker(refreshInterval)
 		for {
 			<-ticker.C
-			err := this.refresh()
+			err := this.refresh(context.Background())
 			if err != nil {
 				log.Printf("aliyunIpToRegion refresh failed: %v", err)
 			}
@@ -66,7 +70,8 @@ func comparePrefix(lhs, rhs netip.Prefix) int {
 
 // nolint:golint
 // prefix list should be sorted, to avoid adding multiple tags for overlapped prefixes
-func (this *aliyunIpToRegion) fetchRegionPublicIPv4List(regionId string) ([]netip.Prefix, error) {
+// FIXME: aliyun official SDK does not support context
+func (this *aliyunIpToRegion) fetchRegionPublicIPv4List(_ context.Context, regionId string) ([]netip.Prefix, error) {
 	config := &openapi.Config{}
 	config.SetEndpoint("vpc.aliyuncs.com")
 
@@ -103,11 +108,16 @@ func (this *aliyunIpToRegion) fetchRegionPublicIPv4List(regionId string) ([]neti
 	return prefixList, nil
 }
 
+var errRefreshTimeout = errors.New("aliyunIpToRegion refresh timeout")
+
 // nolint:golint
-func (this *aliyunIpToRegion) refresh() error {
+func (this *aliyunIpToRegion) refresh(ctx context.Context) error {
+	if this.refreshTimeout > 0 {
+		ctx, _ = context.WithTimeoutCause(ctx, this.refreshTimeout, errRefreshTimeout)
+	}
 	tree := patricia_string_tree.NewTreeV4()
 	for _, regionId := range this.regions { // nolint:golint
-		prefixList, err := this.fetchRegionPublicIPv4List(regionId)
+		prefixList, err := this.fetchRegionPublicIPv4List(ctx, regionId)
 		if err != nil {
 			return fmt.Errorf("unable to fetch public IPv4 list for region %s: %w", regionId, err)
 		}
