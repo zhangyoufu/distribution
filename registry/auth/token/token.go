@@ -176,7 +176,7 @@ func (t *Token) VerifySigningKey(verifyOpts VerifyOptions) (crypto.PublicKey, er
 	if err != nil {
 		// NOTE(milosgajdos): if the x5c header is missing
 		// the token may have been signed by a JWKS.
-		if err == jose.ErrMissingX5cHeader {
+		if errors.Is(err, jose.ErrMissingX5cHeader) {
 			switch {
 			case header.JSONWebKey != nil:
 				return verifyJWK(header, verifyOpts)
