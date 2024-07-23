@@ -10,7 +10,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.0.0
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.0.8
 	github.com/alibabacloud-go/vpc-20160428/v6 v6.8.1
-	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/aliyun/credentials-go v1.3.5
 	github.com/aws/aws-sdk-go v1.48.10
 	github.com/bshuster-repo/logrus-logstash-hook v1.0.0
@@ -109,7 +108,6 @@ require (
 	golang.org/x/sync v0.7.0
 	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230822172742-b8732ec3820d // indirect

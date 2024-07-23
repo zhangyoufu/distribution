@@ -7,37 +7,43 @@ import (
 	"strings"
 	"time"
 
-	awsCredentials "github.com/aws/aws-sdk-go/aws/credentials"
-	oss "github.com/aliyun/aliyun-oss-go-sdk/oss"
 	dcontext "github.com/distribution/distribution/v3/internal/dcontext"
 	requestutil "github.com/distribution/distribution/v3/internal/requestutil"
 	storagedriver "github.com/distribution/distribution/v3/registry/storage/driver"
 	storagemiddleware "github.com/distribution/distribution/v3/registry/storage/driver/middleware"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
+
+type bucket struct {
+	s3   *s3.S3
+	name string
+}
 
 type ossStorageMiddleware struct {
 	storagedriver.StorageDriver
 	urlExpiration time.Duration
-	buckets       map[string]*oss.Bucket
+	buckets       map[string]bucket
 	ipToRegion    *aliyunIpToRegion
 }
 
 var _ storagedriver.StorageDriver = &ossStorageMiddleware{}
 
-type CredentialProvider interface {
-	Credential() (awsCredentials.Value, error)
+type CredentialsProvider interface {
+	Credentials() *credentials.Credentials
 }
 
 func newOssStorageMiddleware(ctx context.Context, storageDriver storagedriver.StorageDriver, options map[string]interface{}) (storagedriver.StorageDriver, error) {
-	// retrieve S3 credential from underlying storage driver
-	credentialProvider, ok := storageDriver.(CredentialProvider)
+	// retrieve S3 credentials from underlying storage driver
+	credentialsProvider, ok := storageDriver.(CredentialsProvider)
 	if !ok {
-		return nil, fmt.Errorf("the underlying storage driver does not provide credential")
+		return nil, fmt.Errorf("the underlying storage driver did not implement CredentialsProvider interface")
 	}
-	credential, err := credentialProvider.Credential()
-	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve credential from underlying storage driver")
-	}
+	creds := credentialsProvider.Credentials()
 
 	// parse secure
 	secure := true
@@ -119,7 +125,7 @@ func newOssStorageMiddleware(ctx context.Context, storageDriver storagedriver.St
 	if !ok {
 		return nil, fmt.Errorf("buckets were not specified in the correct format")
 	}
-	buckets := map[string]*oss.Bucket{}
+	buckets := map[string]bucket{}
 	regions := []string{}
 	for _regionId, _bucketName := range _bucketsMap { // nolint:golint
 		regionId, ok := _regionId.(string) // nolint:golint
@@ -131,23 +137,19 @@ func newOssStorageMiddleware(ctx context.Context, storageDriver storagedriver.St
 		if !ok {
 			return nil, fmt.Errorf("bucket name was not a string")
 		}
-		scheme := "http://"
-		if secure {
-			scheme = "https://"
-		}
-		endpoint := scheme + "oss-" + regionId + "-internal.aliyuncs.com"
-		client, err := oss.New(endpoint, credential.AccessKeyID, credential.SecretAccessKey,
-			oss.AuthVersion(oss.AuthV4),
-			oss.Region(regionId),
-		)
+		awsConfig := aws.NewConfig()
+		awsConfig.WithCredentials(creds)
+		awsConfig.WithRegion(regionId)
+		awsConfig.WithEndpoint("oss-" + regionId + "-internal.aliyuncs.com")
+		awsConfig.WithDisableSSL(!secure)
+		sess, err := session.NewSession(awsConfig)
 		if err != nil {
-			return nil, fmt.Errorf("unable to instantiate OSS client: %w", err)
+			return nil, fmt.Errorf("failed to create aws session: %v", err)
 		}
-		bucket, err := client.Bucket(bucketName)
-		if err != nil {
-			return nil, fmt.Errorf("unable to instantiate OSS bucket: %w", err)
+		buckets[regionId] = bucket{
+			s3: s3.New(sess),
+			name: bucketName,
 		}
-		buckets[regionId] = bucket
 	}
 
 	// initialize ipToRegion
@@ -164,25 +166,32 @@ func newOssStorageMiddleware(ctx context.Context, storageDriver storagedriver.St
 	}, nil
 }
 
-func (lh *ossStorageMiddleware) RedirectURL(r *http.Request, urlPath string) (string, error) {
+func s3Path(path string) string {
+	return strings.TrimLeft(path, "/")
+}
+
+func (lh *ossStorageMiddleware) RedirectURL(r *http.Request, path string) (string, error) {
 	if r.Method != http.MethodGet {
-		return lh.StorageDriver.RedirectURL(r, urlPath)
+		return lh.StorageDriver.RedirectURL(r, path)
 	}
 
 	ipString := requestutil.RemoteIP(r)        // according to X-Forwarded-For or X-Real-Ip header
 	regionId := lh.ipToRegion.Lookup(ipString) // nolint:golint
 	if regionId == "" {
-		return lh.StorageDriver.RedirectURL(r, urlPath)
+		return lh.StorageDriver.RedirectURL(r, path)
 	}
 	dcontext.GetLogger(r.Context()).Debugf("ip %s => aliyun region %s", ipString, regionId)
 
 	bucket, ok := lh.buckets[regionId]
 	if !ok {
-		return lh.StorageDriver.RedirectURL(r, urlPath)
+		return lh.StorageDriver.RedirectURL(r, path)
 	}
 
-	objectKey := strings.TrimLeft(urlPath, "/")
-	return bucket.SignURL(objectKey, oss.HTTPMethod(r.Method), lh.urlExpiration.Milliseconds()/1000)
+	req, _ := bucket.s3.GetObjectRequest(&s3.GetObjectInput{
+		Bucket: aws.String(bucket.name),
+		Key:    aws.String(s3Path(path)),
+	})
+	return req.Presign(lh.urlExpiration)
 }
 
 func init() {

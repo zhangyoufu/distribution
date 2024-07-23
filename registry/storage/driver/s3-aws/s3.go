@@ -1276,9 +1276,9 @@ func (d *Driver) S3BucketKey(path string) string {
 	return d.StorageDriver.(*driver).s3Path(path)
 }
 
-// Credential returns the credential used by s3 client.
-func (d *Driver) Credential() (credentials.Value, error) {
-	return d.StorageDriver.(*driver).S3.Client.Config.Credentials.Get()
+// Credentials returns the credentials used by s3 client.
+func (d *Driver) Credentials() *credentials.Credentials {
+	return d.StorageDriver.(*driver).S3.Client.Config.Credentials
 }
 
 func parseError(path string, err error) error {
