@@ -171,7 +171,8 @@ func s3Path(path string) string {
 
 func (lh *ossStorageMiddleware) RedirectURL(r *http.Request, path string) (string, error) {
 	if r.Method != http.MethodGet {
-		return lh.StorageDriver.RedirectURL(r, path)
+		// blobserver.ServeBlob will fallback to serving the content directly
+		return "", nil
 	}
 
 	ipString := requestutil.RemoteIP(r)        // according to X-Forwarded-For or X-Real-Ip header
