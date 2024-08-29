@@ -116,19 +116,14 @@ jobs:
           targets: artifact-all
       -
         name: Rename provenance
+        working-directory: bin
         run: |
-          for pdir in ./bin/*/; do
-            (
-              cd "$pdir"
-              binname=$(find . -name '*.tar.gz')
-              filename=$(basename "${binname%.tar.gz}")
-              mv "provenance.json" "${filename}.provenance.json"
-            )
-          done
+          binname=$(find . -name '*.tar.gz')
+          filename=$(basename "${binname%.tar.gz}")
+          mv "provenance.json" "${filename}.provenance.json"
       -
-        name: Move and list artifacts
+        name: List artifacts
         run: |
-          mv ./bin/**/* ./bin/
           tree -nh ./bin
       -
         name: Upload artifacts
