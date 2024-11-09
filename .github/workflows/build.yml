@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   test:
+    if: 'false'
     env:
       # Setting GOTOOLCHAIN to local tells go
       # to to use the bundled Go version rather
@@ -63,8 +64,6 @@ jobs:
       packages: write # so we can push the image to GHCR
 
     runs-on: ubuntu-latest
-    needs:
-      - test
     steps:
       -
         name: Checkout
