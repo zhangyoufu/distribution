@@ -362,6 +362,10 @@ github.com/inconshreveable/mousetrap
 # github.com/jmespath/go-jmespath v0.4.0
 ## explicit; go 1.14
 github.com/jmespath/go-jmespath
+# github.com/kentik/patricia v1.2.1
+## explicit; go 1.18
+github.com/kentik/patricia
+github.com/kentik/patricia/string_tree
 # github.com/klauspost/compress v1.17.11
 ## explicit; go 1.21
 github.com/klauspost/compress
