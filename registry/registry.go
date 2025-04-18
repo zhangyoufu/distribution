@@ -139,6 +139,16 @@ type Registry struct {
 	quit   chan os.Signal
 }
 
+func trueIpHeader(h http.Handler, headerName string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headerValue := r.Header.Get(headerName)
+		if headerValue != "" {
+			r.RemoteAddr = headerValue
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 // NewRegistry creates a new registry from a context and configuration struct.
 func NewRegistry(ctx context.Context, config *configuration.Configuration) (*Registry, error) {
 	var err error
@@ -156,6 +166,9 @@ func NewRegistry(ctx context.Context, config *configuration.Configuration) (*Reg
 	handler = health.Handler(handler)
 	handler = panicHandler(handler)
 	if !config.Log.AccessLog.Disabled {
+		if config.Log.AccessLog.TrueIpHeader != "" {
+			handler = trueIpHeader(handler, config.Log.AccessLog.TrueIpHeader)
+		}
 		handler = gorhandlers.CombinedLoggingHandler(os.Stdout, handler)
 	}
 

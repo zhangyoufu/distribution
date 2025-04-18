@@ -121,6 +121,9 @@ type Log struct {
 type AccessLog struct {
 	// Disabled disables access logging.
 	Disabled bool `yaml:"disabled,omitempty"`
+
+	// Update http.Request.RemoteAddr according to this request header.
+	TrueIpHeader string `yaml:"trueipheader,omitempty"`
 }
 
 // HTTP defines configuration options for the HTTP interface of the registry.
